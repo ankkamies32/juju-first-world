@@ -1,0 +1,163 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Juju World — Prototype 0.1</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#101114;color:#eee;font-family:system-ui,sans-serif}
+canvas{display:block;width:100vw;height:100vh}
+#hud{position:fixed;left:18px;top:16px;line-height:1.45;font-size:14px;text-shadow:0 2px 4px #000;pointer-events:none}
+#title{font-size:18px;font-weight:700}
+#help{opacity:.75;margin-top:5px}
+#meter{margin-top:10px;width:190px;height:8px;background:#282a30;border-radius:8px;overflow:hidden}
+#fill{height:100%;width:100%;background:#c7b6ff}
+#msg{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);font-weight:700;text-shadow:0 2px 5px #000;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div id="title">JUJU WORLD — prototype 0.1</div>
+  <div id="help">WASD move · Shift dash · Space wall-bounce · LMB attack · E gather</div>
+  <div id="meter"><div id="fill"></div></div>
+  <div id="stats"></div>
+</div>
+<div id="msg"></div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+function resize(){c.width=innerWidth*devicePixelRatio;c.height=innerHeight*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
+addEventListener('resize',resize);resize();
+
+const W=innerWidth,H=innerHeight;
+const keys={}; let mouse={x:W/2,y:H/2,down:false};
+addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space')e.preventDefault()});
+addEventListener('keyup',e=>keys[e.code]=false);
+addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY});
+addEventListener('mousedown',e=>{if(e.button===0)mouse.down=true});
+addEventListener('mouseup',e=>{if(e.button===0)mouse.down=false});
+
+let p={x:W*.5,y:H*.58,r:13,vx:0,vy:0,juju:100,max:100,hp:100,stamina:100,dash:0,attack:0,wood:0,ore:0,kills:0};
+let camera={x:0,y:0};
+const trees=[{x:W*.18,y:H*.27,r:27},{x:W*.31,y:H*.18,r:25},{x:W*.72,y:H*.24,r:30},{x:W*.84,y:H*.40,r:24}];
+const rocks=[{x:W*.26,y:H*.68,r:24},{x:W*.73,y:H*.72,r:28},{x:W*.58,y:H*.23,r:21}];
+let enemies=[
+ {x:W*.68,y:H*.54,r:19,hp:100,max:100,st:0,dead:false},
+ {x:W*.43,y:H*.34,r:17,hp:70,max:70,st:0,dead:false},
+ {x:W*.86,y:H*.72,r:21,hp:130,max:130,st:0,dead:false}
+];
+let particles=[];
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function burst(x,y,n=12,pow=2){
+ for(let i=0;i<n;i++){let a=Math.random()*Math.PI*2,s=Math.random()*pow+1;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1})}
+}
+function nearestEnemy(){
+ let best=null,bd=9999;
+ for(const e of enemies)if(!e.dead){let d=dist(p,e);if(d<bd){bd=d;best=e}}
+ return [best,bd];
+}
+function gather(){
+ for(const t of trees)if(dist(p,t)<48){t.r=Math.max(12,t.r-.8);p.wood++;burst(t.x,t.y,8,2);flash("WOOD +1");return}
+ for(const r of rocks)if(dist(p,r)<48){r.r=Math.max(12,r.r-.6);p.ore++;burst(r.x,r.y,8,2);flash("ORE +1");return}
+}
+let message="",msgT=0;
+function flash(s){message=s;msgT=45}
+
+function attack(){
+ if(p.attack>0)return;
+ p.attack=12;
+ let [e,d]=nearestEnemy();
+ if(e && d<115){
+   let cost=8;
+   if(p.juju>=cost){p.juju-=cost;e.hp-=34;e.st+=34;burst(e.x,e.y,16,3);flash("JUJU STRIKE")}
+   else {e.hp-=12;flash("STRIKE")}
+   if(e.hp<=0&&!e.dead){e.dead=true;p.kills++;p.hp=Math.min(100,p.hp+22);p.juju=Math.min(p.max,p.juju+18);burst(e.x,e.y,35,4);flash("KILL — RECOVERY")}
+ }
+}
+function dash(){
+ if(p.dash>0||p.stamina<35)return;
+ let x=(keys.KeyD?1:0)-(keys.KeyA?1:0),y=(keys.KeyS?1:0)-(keys.KeyW?1:0);
+ if(!x&&!y){x=(mouse.x-W/2);y=(mouse.y-H/2)}
+ let l=Math.hypot(x,y)||1;x/=l;y/=l;
+ p.vx=x*16;p.vy=y*16;p.dash=38;p.stamina-=35;
+ p.juju=Math.max(0,p.juju-5);
+ for(let i=0;i<8;i++)particles.push({x:p.x,y:p.y,vx:-x*(i+2),vy:-y*(i+2),life:.7});
+}
+function update(){
+ let ax=(keys.KeyD?1:0)-(keys.KeyA?1:0),ay=(keys.KeyS?1:0)-(keys.KeyW?1:0);
+ let l=Math.hypot(ax,ay)||1;
+ if(p.dash<=0){p.vx+=(ax/l)*.9;p.vy+=(ay/l)*.9}
+ let max=p.dash>0?16:4.4;
+ let sp=Math.hypot(p.vx,p.vy);if(sp>max){p.vx=p.vx/sp*max;p.vy=p.vy/sp*max}
+ p.x+=p.vx;p.y+=p.vy;
+ p.vx*=p.dash>0?.88:.78;p.vy*=p.dash>0?.88:.78;
+ if(p.x<20||p.x>W-20){p.vx*=-.9;p.x=Math.max(20,Math.min(W-20,p.x))}
+ if(p.y<70||p.y>H-20){p.vy*=-.9;p.y=Math.max(70,Math.min(H-20,p.y))}
+ if(p.dash>0)p.dash--;
+ p.attack=Math.max(0,p.attack-1);
+ p.stamina=Math.min(100,p.stamina+.35);
+ p.juju=Math.min(p.max,p.juju+(mouse.down?0:.16));
+ if(keys.Space){keys.Space=false; // temporary wall-bounce / impulse
+   let ang=Math.atan2(p.y-H*.5,p.x-W*.5);p.vx=Math.cos(ang)*11;p.vy=Math.sin(ang)*11;p.stamina=Math.max(0,p.stamina-12);burst(p.x,p.y,10,2);flash("WALL-BOUNCE")}
+ if(keys.ShiftLeft||keys.ShiftRight){keys.ShiftLeft=false;keys.ShiftRight=false;dash()}
+ if(keys.KeyE){keys.KeyE=false;gather()}
+ if(mouse.down)attack();
+
+ for(const e of enemies)if(!e.dead){
+   let dx=p.x-e.x,dy=p.y-e.y,d=Math.hypot(dx,dy)||1;
+   if(d<250){e.x+=dx/d*.45*(e.st>0?.55:1);e.y+=dy/d*.45*(e.st>0?.55:1)}
+   e.st=Math.max(0,e.st-1);
+   if(d<35&&Math.random()<.035){p.hp-=7;burst(p.x,p.y,8,2);flash("HIT")}
+ }
+ for(const q of particles){q.x+=q.vx;q.y+=q.vy;q.vx*=.96;q.vy*=.96;q.life-=.035}
+ particles=particles.filter(q=>q.life>0);
+ msgT--; if(msgT<=0)message="";
+}
+
+function draw(){
+ const w=innerWidth,h=innerHeight;
+ ctx.clearRect(0,0,w,h);
+ // ground
+ ctx.fillStyle="#17191a";ctx.fillRect(0,0,w,h);
+ // distant bands
+ ctx.fillStyle="#202421";ctx.fillRect(0,h*.15,w,h*.85);
+ ctx.fillStyle="#292d28";ctx.beginPath();ctx.moveTo(0,h*.34);ctx.lineTo(w*.2,h*.20);ctx.lineTo(w*.42,h*.31);ctx.lineTo(w*.68,h*.18);ctx.lineTo(w,h*.28);ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.fill();
+ // path
+ ctx.strokeStyle="#4a463c";ctx.lineWidth=90;ctx.beginPath();ctx.moveTo(w*.05,h*.82);ctx.quadraticCurveTo(w*.48,h*.55,w*.94,h*.83);ctx.stroke();
+ // rocks
+ for(const r of rocks){ctx.fillStyle="#4d514f";ctx.beginPath();ctx.moveTo(r.x-r.r,r.y+8);ctx.lineTo(r.x-r.r*.45,r.y-r.r);ctx.lineTo(r.x+r.r*.5,r.y-r.r*.8);ctx.lineTo(r.x+r.r,r.y+4);ctx.lineTo(r.x+r.r*.45,r.y+r.r);ctx.lineTo(r.x-r.r*.65,r.y+r.r*.8);ctx.fill()}
+ // trees
+ for(const t of trees){
+   ctx.fillStyle="#292522";ctx.fillRect(t.x-7,t.y+2,14,34);
+   ctx.fillStyle="#303d32";ctx.beginPath();ctx.arc(t.x,t.y,t.r,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle="#3c4939";ctx.beginPath();ctx.arc(t.x-9,t.y-8,t.r*.55,0,Math.PI*2);ctx.fill();
+ }
+ // enemies
+ for(const e of enemies)if(!e.dead){
+   ctx.save();ctx.translate(e.x,e.y);
+   ctx.fillStyle="#221c25";ctx.beginPath();ctx.arc(0,0,e.r,0,Math.PI*2);ctx.fill();
+   ctx.strokeStyle="#9d6d9d";ctx.lineWidth=3;ctx.stroke();
+   ctx.fillStyle="#d8b4d8";ctx.fillRect(-7,-3,4,4);ctx.fillRect(3,-3,4,4);
+   ctx.restore();
+   ctx.fillStyle="#111";ctx.fillRect(e.x-22,e.y-e.r-12,44,5);
+   ctx.fillStyle="#b9a0c8";ctx.fillRect(e.x-22,e.y-e.r-12,44*(e.hp/e.max),5);
+ }
+ // player
+ ctx.save();ctx.translate(p.x,p.y);
+ if(p.dash>0){ctx.globalAlpha=.25;ctx.fillStyle="#c7b6ff";ctx.beginPath();ctx.arc(-p.vx*2,-p.vy*2,22,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1}
+ ctx.fillStyle="#d4d4d0";ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();
+ ctx.strokeStyle="#c7b6ff";ctx.lineWidth=3;ctx.stroke();
+ ctx.restore();
+ // particles
+ for(const q of particles){ctx.globalAlpha=q.life;ctx.fillStyle="#c7b6ff";ctx.fillRect(q.x,q.y,3,3)}ctx.globalAlpha=1;
+ // crosshair
+ ctx.strokeStyle="#ddd";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(mouse.x-7,mouse.y);ctx.lineTo(mouse.x+7,mouse.y);ctx.moveTo(mouse.x,mouse.y-7);ctx.lineTo(mouse.x,mouse.y+7);ctx.stroke();
+ document.getElementById("fill").style.width=p.juju+"%";
+ document.getElementById("stats").textContent=`HP ${Math.max(0,Math.round(p.hp))} · Juju ${Math.round(p.juju)} · Wood ${p.wood} · Ore ${p.ore} · Kills ${p.kills}`;
+ document.getElementById("msg").textContent=message;
+}
+function loop(){update();draw();requestAnimationFrame(loop)}loop();
+</script>
+</body>
+</html>
